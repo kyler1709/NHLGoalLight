@@ -4,8 +4,8 @@
 This project flashes a **Kasa smart bulb** whenever your favourite teams score a goal, using the **NHL API**.
 
 ## 🛠️ Requirements
-- Python 3.9+
-- A TP-Link Kasa smart bulb
+- Python
+- Kasa smart bulb
 - `python-kasa` library
 
 ## 📥 Installation
@@ -30,4 +30,4 @@ python main.py
 
 
 ## 📜 License
-This project is open-source. Feel free to contribute! 🚀
+This project is open-source.
