@@ -20,11 +20,10 @@ This project flashes a **Kasa smart bulb** whenever your favourite teams score a
    ```
 3. **Set up your Kasa smart bulb**
    - Ensure it's connected to the same network as your PC.
-   - Find its IP address using `kasa discover` or your router settings.
+   - Find its IP address using `kasa discover`
 
 
 ## 🚀 Running the Script
-Run the script to check for goals and flash the bulb:
 ```sh
 python main.py
 ```
