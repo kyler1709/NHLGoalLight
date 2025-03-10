@@ -16,7 +16,7 @@ This project flashes a **Kasa smart bulb** whenever your favourite teams score a
    ```
 2. **Install dependencies**
    ```sh
-   pip install requirements.txt
+   pip install -r requirements.txt
    ```
 3. **Set up your Kasa smart bulb**
    - Ensure it's connected to the same network as your PC.
