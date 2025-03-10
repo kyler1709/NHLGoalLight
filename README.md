@@ -11,12 +11,12 @@ This project flashes a **Kasa smart bulb** whenever your favourite teams score a
 ## 📥 Installation
 1. **Clone the repository**
    ```sh
-   git clone https://github.com/kyler1709/NHLGoalLight
-   cd nhl-goal-alert
+   git clone https://github.com/kyler1709/NHLGoalLight.git
+   cd main.py
    ```
 2. **Install dependencies**
    ```sh
-   pip install python-kasa requests
+   pip install requirements.txt
    ```
 3. **Set up your Kasa smart bulb**
    - Ensure it's connected to the same network as your PC.
