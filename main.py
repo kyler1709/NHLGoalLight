@@ -190,8 +190,8 @@ async def get_game_data(game_id):
             data = response.json()  # Parse the response JSON data
             
             game_data = {
-                "away_team": data["awayTeam"]["abbrev"],  # Away team abbreviation (e.g., "OTT")
-                "home_team": data["homeTeam"]["abbrev"],  # Home team abbreviation (e.g., "CHI")
+                "away_team": data["awayTeam"]["abbrev"],  # Away team abbreviation
+                "home_team": data["homeTeam"]["abbrev"],  # Home team abbreviation
                 "game_state": data.get("gameState", ""),  # Current game state
             }
             
@@ -222,14 +222,13 @@ async def monitor_game(game_info, bulb_lock):
     # Check if game is in the future
     now = datetime.datetime.now(pytz.utc)
     if start_time_utc > now:
-        time_until_start = (start_time_utc - now).total_seconds()
-        print(f"Game {away_team} @ {home_team} starts at {time_str} (in {int(time_until_start/60)} minutes)")
+        print(f"Game {away_team} @ {home_team} [{time_str}]")
         
         # If game starts more than 5 minutes from now, wait until closer to game time
-        if time_until_start > 300:  # More than 5 minutes
-            wait_time = time_until_start - 300  # Wait until 5 minutes before game
+        if (start_time_utc - now).total_seconds() > 300:  # More than 5 minutes
+            wait_time = (start_time_utc - now).total_seconds() - 300  # Wait until 5 minutes before game
             await asyncio.sleep(wait_time)
-            print(f"Getting ready for {away_team} @ {home_team} game (starts in 5 minutes)")
+            print(f"Getting ready for {away_team} @ {home_team} game [starts in 5 minutes]")
     
     # Initialize scores to None, indicating game hasn't started
     last_away_score = None
