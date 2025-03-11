@@ -6,10 +6,9 @@ import pytz
 import time
 
 # Constants for the bulb IP and settings
-BULB_IP = "192.168.2.155"  # The IP address of the smart bulb
+BULB_IP = "BULB IP HERE"  # The IP address of the smart bulb
 CHECK_INTERVAL = 1  # Time interval (in seconds) to check for updates (1 second)
 FLASH_DURATION = 30  # Duration (in seconds) for which the bulb should flash
-# We'll determine the default color dynamically when the program starts
 
 # NHL team colors (primary and secondary) in HSV format
 # Format: [Hue (0-360), Saturation (0-100), Value (0-100)]
@@ -49,8 +48,15 @@ TEAM_COLORS = {
     "UTA": {"primary": [0, 0, 0], "secondary": [45, 100, 100]},       # Black and Gold (Utah)
 }
 
-# Store the original bulb color
-DEFAULT_COLOR = {"hue": 0, "saturation": 0, "value": 100}  # This will be overwritten at startup
+# Global variable to store the original bulb state
+ORIGINAL_BULB_STATE = {
+    "on": True,
+    "brightness": 100,
+    "color_temp": None,
+    "hue": 0,
+    "saturation": 0,
+    "color_mode": None
+}
 
 def get_todays_date():
     """Get today's date in the format required by the NHL API (YYYY-MM-DD)."""
@@ -162,11 +168,61 @@ def display_game_options(games):
     
     return selected_games
 
-# Function to get the current bulb color
-async def get_current_bulb_color():
-    """Get the current color settings of the bulb."""
-    global DEFAULT_COLOR
+# Function to capture the original bulb state
+async def capture_original_bulb_state():
+    """Capture the complete original state of the bulb."""
+    global ORIGINAL_BULB_STATE
     
+    try:
+        # Connect to the bulb
+        bulb = IotBulb(BULB_IP)
+        await bulb.update()
+        
+        # Store if the bulb is on
+        ORIGINAL_BULB_STATE["on"] = bulb.is_on
+        
+        # Get the light module
+        light = bulb.modules["Light"]
+        
+        # Store brightness
+        if hasattr(light, "brightness"):
+            ORIGINAL_BULB_STATE["brightness"] = light.brightness
+        
+        # Check color mode and store relevant values
+        if hasattr(light, "color_mode"):
+            ORIGINAL_BULB_STATE["color_mode"] = light.color_mode
+        
+        # Store HSV values using the namedtuple-style access
+        if hasattr(light, "hsv"):
+            hsv_obj = light.hsv
+            # Handle HSV regardless of whether it's a namedtuple, object, or regular tuple
+            try:
+                # Try accessing by attribute names (namedtuple or object style)
+                ORIGINAL_BULB_STATE["hue"] = hsv_obj.hue
+                ORIGINAL_BULB_STATE["saturation"] = hsv_obj.saturation
+                ORIGINAL_BULB_STATE["brightness"] = hsv_obj.value
+            except AttributeError:
+                # Fall back to index-based access if attribute access fails
+                if len(hsv_obj) >= 3:
+                    ORIGINAL_BULB_STATE["hue"] = hsv_obj[0]
+                    ORIGINAL_BULB_STATE["saturation"] = hsv_obj[1]
+                    ORIGINAL_BULB_STATE["brightness"] = hsv_obj[2]
+        
+        # Store color temperature if in that mode
+        if hasattr(light, "color_temp") and light.color_temp:
+            ORIGINAL_BULB_STATE["color_temp"] = light.color_temp
+        
+        return True
+    except Exception as e:
+        print(f"Error capturing original bulb state: {e}")
+        # Print detailed stack trace to help debug
+        import traceback
+        traceback.print_exc()
+        return False
+
+# Function to restore the original bulb state
+async def restore_original_bulb_state():
+    """Restore the bulb to its original state."""
     try:
         # Connect to the bulb
         bulb = IotBulb(BULB_IP)
@@ -175,21 +231,29 @@ async def get_current_bulb_color():
         # Get the light module
         light = bulb.modules["Light"]
         
-        # Get current HSV values
-        if hasattr(light, "hsv"):
-            current_hsv = light.hsv
-            if current_hsv:
-                DEFAULT_COLOR = {
-                    "hue": current_hsv[0],
-                    "saturation": current_hsv[1],
-                    "value": current_hsv[2]
-                }
-                return
+        # Restore color state based on original color mode
+        if ORIGINAL_BULB_STATE["color_mode"] == "color_temp" and ORIGINAL_BULB_STATE["color_temp"]:
+            # Restore color temperature
+            await light.set_color_temp(ORIGINAL_BULB_STATE["color_temp"], transition=100)
+        else:
+            # Restore HSV
+            await light.set_hsv(
+                ORIGINAL_BULB_STATE["hue"],
+                ORIGINAL_BULB_STATE["saturation"],
+                ORIGINAL_BULB_STATE["brightness"] if ORIGINAL_BULB_STATE["brightness"] else 100,
+                transition=100
+            )
+        
+        # Restore on/off state (do this last)
+        if ORIGINAL_BULB_STATE["on"]:
+            await bulb.turn_on()
+        else:
+            await bulb.turn_off()
+            
+        return True
     except Exception as e:
-        print(f"Error getting current bulb color: {e}")
-    
-    # Fallback to default white if we couldn't get the current color
-    DEFAULT_COLOR = {"hue": 0, "saturation": 0, "value": 100}
+        print(f"Error restoring bulb state: {e}")
+        return False
 
 # Function to set the bulb color using the new API
 async def set_bulb_color(bulb, hue, saturation, value):
@@ -218,8 +282,6 @@ async def flash_team_colors(ip, team_abbrev, duration=30, interval=0.5):
     # Set brightness (value) to 100
     primary[2] = 100
     secondary[2] = 100
-    
-    print(f"Flashing {team_abbrev} colors: {primary} and {secondary}")
 
     end_time = asyncio.get_event_loop().time() + duration  # Calculate when the flashing should stop
     while asyncio.get_event_loop().time() < end_time:  # Keep flashing until the specified duration has passed
@@ -231,8 +293,8 @@ async def flash_team_colors(ip, team_abbrev, duration=30, interval=0.5):
         await set_bulb_color(bulb, secondary[0], secondary[1], secondary[2])
         await asyncio.sleep(interval)  # Wait for the specified interval before changing the color again
     
-    # Set back to original color when done
-    await set_bulb_color(bulb, DEFAULT_COLOR["hue"], DEFAULT_COLOR["saturation"], DEFAULT_COLOR["value"])
+    # Restore original state when done
+    await restore_original_bulb_state()
 
 # Function to fetch the current game data
 async def get_game_data(game_id):
@@ -350,11 +412,15 @@ async def monitor_game(game_info, bulb_lock):
 
 async def main():
     """Main function to run the NHL goal light program."""
-    print("NHL Goal Light - Fetching today's games...")
+    print("NHL Goal Light - Initializing...")
     
-    # Get the current bulb color before anything else
-    await get_current_bulb_color()
+    # Capture the original bulb state
+    print("Capturing current bulb state...")
+    success = await capture_original_bulb_state()
+    if not success:
+        print("Warning: Failed to capture original bulb state. Default white will be used after flashing.")
     
+    print("Fetching today's games...")
     # Fetch today's games and let the user select multiple games
     games = fetch_todays_games()
     selected_games = display_game_options(games)
