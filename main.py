@@ -5,10 +5,11 @@ import datetime
 import pytz
 import time
 
-# Constants for the bulb IP
+# Constants for the bulb IP and settings
 BULB_IP = "192.168.2.155"  # The IP address of the smart bulb
 CHECK_INTERVAL = 1  # Time interval (in seconds) to check for updates (1 second)
 FLASH_DURATION = 30  # Duration (in seconds) for which the bulb should flash
+# We'll determine the default color dynamically when the program starts
 
 # NHL team colors (primary and secondary) in HSV format
 # Format: [Hue (0-360), Saturation (0-100), Value (0-100)]
@@ -44,8 +45,12 @@ TEAM_COLORS = {
     "VAN": {"primary": [216, 100, 100], "secondary": [120, 100, 70]}, # Blue and Green
     "VGK": {"primary": [45, 100, 100], "secondary": [0, 0, 20]},      # Gold and Black
     "WSH": {"primary": [0, 100, 100], "secondary": [216, 100, 100]},  # Red and Blue
-    "WPG": {"primary": [216, 100, 100], "secondary": [0, 0, 20]}      # Blue and Dark Blue
+    "WPG": {"primary": [216, 100, 100], "secondary": [0, 0, 20]},     # Blue and Dark Blue
+    "UTA": {"primary": [0, 0, 0], "secondary": [45, 100, 100]},       # Black and Gold (Utah)
 }
+
+# Store the original bulb color
+DEFAULT_COLOR = {"hue": 0, "saturation": 0, "value": 100}  # This will be overwritten at startup
 
 def get_todays_date():
     """Get today's date in the format required by the NHL API (YYYY-MM-DD)."""
@@ -147,7 +152,7 @@ def display_game_options(games):
                 local_start = start_time.astimezone(local_tz)
                 time_str = local_start.strftime("%I:%M %p")
                 
-                print(f"Added: {away_team} @ {home_team} (Starts at {time_str})")
+                print(f"Added: {away_team} @ {home_team} [{time_str}]")
             
             # Selection complete, exit loop
             break
@@ -157,28 +162,77 @@ def display_game_options(games):
     
     return selected_games
 
+# Function to get the current bulb color
+async def get_current_bulb_color():
+    """Get the current color settings of the bulb."""
+    global DEFAULT_COLOR
+    
+    try:
+        # Connect to the bulb
+        bulb = IotBulb(BULB_IP)
+        await bulb.update()
+        
+        # Get the light module
+        light = bulb.modules["Light"]
+        
+        # Get current HSV values
+        if hasattr(light, "hsv"):
+            current_hsv = light.hsv
+            if current_hsv:
+                DEFAULT_COLOR = {
+                    "hue": current_hsv[0],
+                    "saturation": current_hsv[1],
+                    "value": current_hsv[2]
+                }
+                return
+    except Exception as e:
+        print(f"Error getting current bulb color: {e}")
+    
+    # Fallback to default white if we couldn't get the current color
+    DEFAULT_COLOR = {"hue": 0, "saturation": 0, "value": 100}
+
+# Function to set the bulb color using the new API
+async def set_bulb_color(bulb, hue, saturation, value):
+    """Set the bulb color using the new API to avoid deprecation warnings."""
+    try:
+        # Get the light module
+        light = bulb.modules["Light"]
+        
+        # Set HSV values
+        await light.set_hsv(hue, saturation, value, transition=100)
+    except Exception as e:
+        print(f"Error setting bulb color: {e}")
+
 # Function to flash the bulb with team colors
 async def flash_team_colors(ip, team_abbrev, duration=30, interval=0.5):
     """Flashes the bulb with the team's colors for the specified duration."""
     bulb = IotBulb(ip)  # Create an IotBulb object to interact with the bulb
     await bulb.update()  # Update the current state of the bulb
 
-    # Get team colors, defaulting to red and white if team not found
+    # Get team colors, ensuring brightness (value) is always 100
     team_colors = TEAM_COLORS.get(team_abbrev, {"primary": [0, 100, 100], "secondary": [0, 0, 100]})
+    
     primary = team_colors["primary"]
     secondary = team_colors["secondary"]
+    
+    # Set brightness (value) to 100
+    primary[2] = 100
+    secondary[2] = 100
     
     print(f"Flashing {team_abbrev} colors: {primary} and {secondary}")
 
     end_time = asyncio.get_event_loop().time() + duration  # Calculate when the flashing should stop
     while asyncio.get_event_loop().time() < end_time:  # Keep flashing until the specified duration has passed
         # Set primary color
-        await bulb.set_hsv(primary[0], primary[1], primary[2], transition=100)
+        await set_bulb_color(bulb, primary[0], primary[1], primary[2])
         await asyncio.sleep(interval)  # Wait for the specified interval before changing the color
 
         # Set secondary color
-        await bulb.set_hsv(secondary[0], secondary[1], secondary[2], transition=100)
+        await set_bulb_color(bulb, secondary[0], secondary[1], secondary[2])
         await asyncio.sleep(interval)  # Wait for the specified interval before changing the color again
+    
+    # Set back to original color when done
+    await set_bulb_color(bulb, DEFAULT_COLOR["hue"], DEFAULT_COLOR["saturation"], DEFAULT_COLOR["value"])
 
 # Function to fetch the current game data
 async def get_game_data(game_id):
@@ -219,11 +273,12 @@ async def monitor_game(game_info, bulb_lock):
     local_start = start_time_utc.astimezone(local_tz)
     time_str = local_start.strftime("%I:%M %p")
     
+    # Print game info with start time in brackets
+    print(f"Game {away_team} @ {home_team} [{time_str}]")
+    
     # Check if game is in the future
     now = datetime.datetime.now(pytz.utc)
     if start_time_utc > now:
-        print(f"Game {away_team} @ {home_team} [{time_str}]")
-        
         # If game starts more than 5 minutes from now, wait until closer to game time
         if (start_time_utc - now).total_seconds() > 300:  # More than 5 minutes
             wait_time = (start_time_utc - now).total_seconds() - 300  # Wait until 5 minutes before game
@@ -235,6 +290,7 @@ async def monitor_game(game_info, bulb_lock):
     last_home_score = None
     game_started = False
     game_ended = False
+    waiting_printed = False  # Flag to track if we've printed the waiting message
     
     # Keep checking until the game ends
     while not game_ended:
@@ -282,11 +338,12 @@ async def monitor_game(game_info, bulb_lock):
                     last_home_score = home_score
             else:
                 # Game hasn't started yet
-                if not game_started:
+                if not game_started and not waiting_printed:
                     # Check if we're close to game time
                     now = datetime.datetime.now(pytz.utc)
                     if start_time_utc <= now:
                         print(f"Waiting for {away_team} @ {home_team} game to start...")
+                        waiting_printed = True  # Set flag so we only print this once
         
         # Wait before checking again
         await asyncio.sleep(CHECK_INTERVAL)
@@ -294,6 +351,9 @@ async def monitor_game(game_info, bulb_lock):
 async def main():
     """Main function to run the NHL goal light program."""
     print("NHL Goal Light - Fetching today's games...")
+    
+    # Get the current bulb color before anything else
+    await get_current_bulb_color()
     
     # Fetch today's games and let the user select multiple games
     games = fetch_todays_games()
